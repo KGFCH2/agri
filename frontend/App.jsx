@@ -15,7 +15,6 @@ import {
 
 function App() {
   const [showAlert, setShowAlert] = useState(true);
-  const [isMuted, setIsMuted] = useState(true);
   const [isOpen, setIsOpen] = useState(false);
   const [sunlight, setSunlight] = useState(false); 
 
@@ -24,8 +23,6 @@ function App() {
   const [preferredLang, setPreferredLang] = useState(
     localStorage.getItem("preferredLanguage") || "en"
   );
-
-  const videoRef = useRef(null);
 
 
   const handleLogin = (e) => {
@@ -49,11 +46,7 @@ function App() {
 
   return (
     <Router>
-      {}
       <div className={sunlight ? "app sunlight" : "app"}>
-        
-
-        {/* Navbar */}
         <nav className="navbar">
           <div className="nav-left">
             <FaLeaf className="icon" />
@@ -81,7 +74,6 @@ function App() {
           </ul>
 
           <div className="nav-right">
-            {}
             <button
               onClick={() => setSunlight(!sunlight)}
               className="sunlight-toggle"
@@ -90,7 +82,6 @@ function App() {
               {sunlight ? "👁️ Normal View" : "☀️ Sunlight Mode"}
             </button>
 
-            {/* Language Dropdown */}
             <select
               className="lang-select"
               value={preferredLang}
@@ -134,7 +125,6 @@ function App() {
           </button>
         </nav>
 
-        {/* Alert */}
         {showAlert && (
           <div className="alert-bar">
             🌧️ Weather Alert: Heavy rainfall expected in parts of Maharashtra this evening.
@@ -144,7 +134,6 @@ function App() {
           </div>
         )}
 
-        {/* Routes */}
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/advisor" element={<Advisor />} />
