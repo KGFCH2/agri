@@ -221,13 +221,14 @@ function App() {
           <li><Link to="/" onClick={() => setIsOpen(false)}>Home</Link></li>
           <li><Link to="/how-it-works" onClick={() => setIsOpen(false)}>Works</Link></li>
           <li><Link to="/crop-guide" onClick={() => setIsOpen(false)}>Guide</Link></li>
+
           <li><Link to="/resources" onClick={() => setIsOpen(false)}>Resources</Link></li>
         </ul>
 
-         <div className="nav-right">
-           <button onClick={handleThemeToggle} className="theme-toggle" aria-label="Toggle Theme">
-             {isDarkTheme ? "☀️" : "🌙"}
-           </button>
+        <div className="nav-right">
+          <button onClick={handleThemeToggle} className="theme-toggle" aria-label="Toggle Theme">
+            {isDarkTheme ? "☀️" : "🌙"}
+          </button>
 
            <div className="more-menu-container" onClick={() => { setShowMoreMenu(!showMoreMenu); setShowScorecard(false); }}>
              <button className="btn-more-menu" aria-label="Profile and Settings">
@@ -297,7 +298,6 @@ function App() {
             )}
           </div>
         </div>
-
         <button
           className="hamburger"
           onClick={handleNavToggle}
@@ -305,8 +305,6 @@ function App() {
           {isOpen ? <FaTimes /> : <FaBars />}
         </button>
       </nav>
-
-
 
       {!loading && user && !user.emailVerified && !showScorecard && location.pathname !== "/login" && (
         <div className="verification-overlay">
