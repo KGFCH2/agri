@@ -136,7 +136,7 @@ export default function Contributors() {
               </div>
 
               <div className="card-content">
-                <h3>{contributor.name}</h3>
+                 <h3><span className="notranslate">{contributor.name}</span></h3>
                 <p className="role">{contributor.role}</p>
 
                 {contributor.contributions && (

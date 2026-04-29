@@ -5,6 +5,7 @@ import {
   FaBrain, FaSun, FaHandHoldingWater, FaChartLine,
   FaShieldAlt, FaRocket, FaGlobe,
   FaGithub, FaLinkedin, FaTwitter, FaArrowRight,
+  FaCrown,
 } from "react-icons/fa";
 import "./AboutUs.css";
 
@@ -33,10 +34,12 @@ const TIMELINE = [
 ];
 
 const TEAM = [
-  { name: "Esha Jha", role: "Founder & Lead Developer", github: "#", linkedin: "#", twitter: "#", initial: "E" },
-  { name: "Ankit Kumar", role: "Frontend Engineer", github: "#", linkedin: "#", twitter: "#", initial: "A" },
-  { name: "Priya Sharma", role: "AI/ML Engineer", github: "#", linkedin: "#", twitter: "#", initial: "P" },
-  { name: "Rahul Verma", role: "Backend Developer", github: "#", linkedin: "#", twitter: "#", initial: "R" },
+    { name: "Esha Jha", role: "Owner & Backend+Frontend Developer", github: "#", linkedin: "#", twitter: "#", initial: "E", isOwner: true },
+    { name: "Eshita Jha", role: "Owner & Research Analyst", github: "#", linkedin: "#", twitter: "#", initial: "E", isOwner: true },
+    { name: "Shreyshi Sriwastav", role: "Owner & ML Engineer", github: "#", linkedin: "#", twitter: "#", initial: "S", isOwner: true },
+    { name: "Annsu Choudhary", role: "Owner & Backend Developer", github: "#", linkedin: "#", twitter: "#", initial: "A", isOwner: true },
+    { name: "Devanshi Singh", role: "Owner & Research Analyst", github: "#", linkedin: "#", twitter: "#", initial: "D", isOwner: true },
+    { name: "Bhargavi Kanojiya", role: "Owner & ML Engineer", github: "#", linkedin: "#", twitter: "#", initial: "B", isOwner: true },
 ];
 
 const FARM_ICONS = [];
@@ -207,19 +210,24 @@ export default function AboutUs() {
           <p>A passionate group of developers and agri-tech enthusiasts.</p>
         </div>
         <div className="about-team-grid">
-          {TEAM.map((m, i) => (
-            <div className="about-team-card" key={i}>
-              <div className="team-avatar">{m.initial}</div>
-              <h3>{m.name}</h3>
-              <p>{m.role}</p>
-              {/* TODO: Replace href="#" with real social profile links */}
-              <div className="team-socials">
-                {m.github && m.github !== "#" && <a href={m.github} aria-label="GitHub" target="_blank" rel="noopener noreferrer"><FaGithub /></a>}
-                {m.linkedin && m.linkedin !== "#" && <a href={m.linkedin} aria-label="LinkedIn" target="_blank" rel="noopener noreferrer"><FaLinkedin /></a>}
-                {m.twitter && m.twitter !== "#" && <a href={m.twitter} aria-label="Twitter" target="_blank" rel="noopener noreferrer"><FaTwitter /></a>}
-              </div>
-            </div>
-          ))}
+{TEAM.map((m, i) => (
+             <div className="about-team-card" key={i}>
+               <div className="team-avatar">{m.initial}</div>
+                <h3><span className="notranslate">{m.name}</span></h3>
+                <p><span className="notranslate">{m.role}</span></p>
+               {m.isOwner && (
+                 <div className="founder-badge">
+                   <FaCrown /> Owner
+                 </div>
+               )}
+               {/* TODO: Replace href="#" with real social profile links */}
+               <div className="team-socials">
+                 {m.github && m.github !== "#" && <a href={m.github} aria-label="GitHub" target="_blank" rel="noopener noreferrer"><FaGithub /></a>}
+                 {m.linkedin && m.linkedin !== "#" && <a href={m.linkedin} aria-label="LinkedIn" target="_blank" rel="noopener noreferrer"><FaLinkedin /></a>}
+                 {m.twitter && m.twitter !== "#" && <a href={m.twitter} aria-label="Twitter" target="_blank" rel="noopener noreferrer"><FaTwitter /></a>}
+               </div>
+             </div>
+           ))}
         </div>
       </div>
 
