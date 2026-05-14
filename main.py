@@ -43,6 +43,19 @@ class RAGQuery(BaseModel):
     query: str = Field(..., min_length=3, max_length=500)
     top_k: int = Field(default=3, ge=1, le=5)
 
+# Crop Quality Grading Models
+class CropQualityGradingRequest(BaseModel):
+    crop_type: str = Field(..., min_length=1, max_length=50)
+    image_base64: str = Field(..., min_length=100)  # Base64 encoded image
+
+class CropQualityBatchRequest(BaseModel):
+    crop_type: str = Field(..., min_length=1, max_length=50)
+    images_base64: list = Field(..., min_items=1, max_items=100)  # Multiple images
+
+class QualityTrendsRequest(BaseModel):
+    crop_type: str = Field(..., min_length=1, max_length=50)
+    days: int = Field(default=7, ge=1, le=30)
+
 # Rate Limiting
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -62,6 +75,7 @@ from ml.preprocessing import UnknownCategoryError, MissingFeatureError
 from alert_rules import generate_alerts
 from whatsapp_service import send_whatsapp_message, format_alert_message
 from whatsapp_store import subscriber_store
+from crop_quality_grading import CropQualityGrader
 
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
@@ -272,8 +286,12 @@ init_ml_pipeline()
 
 # Load model directly for backward compatibility or simple use cases if needed
 try:
-    model = joblib.load("yield_model.joblib")
-    model_lag = joblib.load("sklearn_yield_model.pkl")
+    # Use signature-verified loading to prevent execution of malicious
+    # pickled objects. These calls expect companion signature files:
+    # - yield_model.joblib.sig
+    # - sklearn_yield_model.pkl.sig
+    model = verify_and_load_joblib("yield_model.joblib")
+    model_lag = verify_and_load_joblib("sklearn_yield_model.pkl")
     print("Models loaded successfully")
 except Exception as e:
     print(f"Error loading models: {e}")
@@ -289,6 +307,9 @@ static_notifications = [
         "time": datetime.now().isoformat()
     }
 ]
+
+# Initialize Crop Quality Grader
+_crop_quality_grader = CropQualityGrader()
 
 # --- Routes ---
 
@@ -787,6 +808,370 @@ async def simulate_climate(request: Request, data: SimulationRequest):
         "risk_level": "High" if total_yield_impact < -0.15 else "Medium" if total_yield_impact < -0.05 else "Low",
         "recommendation": "Switch to heat-tolerant varieties" if data.temp_delta > 2 else "Ensure adequate irrigation" if data.rain_delta < -20 else "Conditions remain viable"
     }
+
+@app.post("/api/seeds/verify")
+@limiter.limit("10/minute")
+async def verify_seed(data: SeedVerifyRequest, request: Request):
+    """
+    Verifies seed authenticity against the trusted batch registry.
+
+    Registry lookup logic
+    ---------------------
+    Each entry in SEED_REGISTRY is keyed by the canonical batch code
+    (upper-cased, stripped).  The entry carries:
+
+    - status        : "authentic" | "invalid"
+    - crop          : crop name the batch is certified for
+    - batch         : batch identifier
+    - manufacturer  : seed company name
+    - cert_body     : certifying authority (e.g. NSC, ICAR)
+    - certified_on  : ISO date string of certification
+    - expires_on    : ISO date string of expiry  (YYYY-MM-DD)
+    - reason        : present only on invalid entries — human-readable
+                      explanation of why the batch is rejected
+
+    Verification steps (in order)
+    ------------------------------
+    1. Format validation  — code must match the canonical pattern
+                            FS-<ALPHA>-<YEAR>-<ALPHANUM> or be a known
+                            blacklisted / test code.  Codes that do not
+                            match any registry entry are returned as
+                            "not_found" — never as "authentic".
+    2. Registry lookup    — exact match against SEED_REGISTRY keys.
+    3. Blacklist check    — status == "invalid" → return immediately.
+    4. Expiry check       — authentic entries whose expires_on is in the
+                            past are downgraded to "invalid" at query time
+                            so the registry does not need to be updated
+                            every season.
+    5. Return             — structured response with full metadata.
+
+    Security note
+    -------------
+    The old implementation used substring matching (`"FS-AUTH" in code`),
+    which allowed any crafted string containing that substring to pass.
+    This implementation uses exact dictionary lookup only — no substring
+    or regex matching is performed on the submitted code.
+    """
+
+    # ── Trusted seed batch registry ──────────────────────────────────────────
+    # In a production deployment this would be loaded from Firestore or a
+    # SQL database.  The structure is kept identical so swapping the data
+    # source requires only changing the lookup call, not the validation logic.
+    SEED_REGISTRY: dict[str, dict] = {
+        # ── Authentic batches ────────────────────────────────────────────────
+        "FS-RICE-2026-A1": {
+            "status": "authentic",
+            "crop": "Rice (IR-64)",
+            "batch": "2026-A1",
+            "manufacturer": "National Seeds Corporation (NSC)",
+            "cert_body": "Central Seed Certification Board (CSCB)",
+            "certified_on": "2025-10-01",
+            "expires_on": "2027-03-31",
+        },
+        "FS-WHEAT-2026-W2": {
+            "status": "authentic",
+            "crop": "Wheat (HD-2967)",
+            "batch": "2026-W2",
+            "manufacturer": "Punjab Agro Industries Corporation",
+            "cert_body": "State Seed Certification Agency, Punjab",
+            "certified_on": "2025-11-15",
+            "expires_on": "2027-05-31",
+        },
+        "FS-COTTON-2026-C3": {
+            "status": "authentic",
+            "crop": "Cotton (Bt Hybrid)",
+            "batch": "2026-C3",
+            "manufacturer": "Maharashtra State Seeds Corporation",
+            "cert_body": "Central Seed Certification Board (CSCB)",
+            "certified_on": "2026-01-10",
+            "expires_on": "2027-06-30",
+        },
+        "FS-MAIZE-2026-M4": {
+            "status": "authentic",
+            "crop": "Maize (DKC-9144)",
+            "batch": "2026-M4",
+            "manufacturer": "ICAR-Indian Institute of Maize Research",
+            "cert_body": "Central Seed Certification Board (CSCB)",
+            "certified_on": "2026-02-20",
+            "expires_on": "2027-08-31",
+        },
+        "FS-SOYBEAN-2026-S5": {
+            "status": "authentic",
+            "crop": "Soybean (JS-335)",
+            "batch": "2026-S5",
+            "manufacturer": "Madhya Pradesh State Seeds Corporation",
+            "cert_body": "State Seed Certification Agency, MP",
+            "certified_on": "2026-03-05",
+            "expires_on": "2027-09-30",
+        },
+        # ── Blacklisted / counterfeit batches ────────────────────────────────
+        "FS-FAKE-2026-X9": {
+            "status": "invalid",
+            "crop": "Unknown",
+            "batch": "2026-X9",
+            "manufacturer": "Unknown",
+            "cert_body": "N/A",
+            "certified_on": "N/A",
+            "expires_on": "N/A",
+            "reason": "Blacklisted — reported counterfeit batch",
+        },
+        "FS-RICE-2024-OLD": {
+            "status": "invalid",
+            "crop": "Rice (IR-64)",
+            "batch": "2024-OLD",
+            "manufacturer": "National Seeds Corporation (NSC)",
+            "cert_body": "Central Seed Certification Board (CSCB)",
+            "certified_on": "2023-10-01",
+            "expires_on": "2025-03-31",   # already expired — also caught by expiry check
+            "reason": "Expired — shelf life exceeded as of 2025-03-31",
+        },
+    }
+    # ─────────────────────────────────────────────────────────────────────────
+
+    # Step 1 — normalise the submitted code.
+    # Upper-case and strip whitespace so "fs-rice-2026-a1 " matches correctly.
+    code = data.code.upper().strip()
+
+    # Step 2 — exact registry lookup (no substring matching).
+    entry = SEED_REGISTRY.get(code)
+
+    if entry is None:
+        # Code is not in the registry at all — return not_found.
+        # We deliberately do NOT fall back to any pattern matching here.
+        logger.info("Seed verification: code not found in registry — code=%s", code)
+        return {
+            "success": True,
+            "code": code,
+            "status": "not_found",
+        }
+
+    # Step 3 — blacklist check.
+    if entry["status"] == "invalid":
+        logger.warning(
+            "Seed verification: invalid/blacklisted code submitted — code=%s reason=%s",
+            code,
+            entry.get("reason", "unknown"),
+        )
+        return {
+            "success": True,
+            "code": code,
+            "status": "invalid",
+            "crop": entry["crop"],
+            "batch": entry["batch"],
+            "manufacturer": entry["manufacturer"],
+            "cert_body": entry["cert_body"],
+            "reason": entry.get("reason", "Batch is invalid or blacklisted"),
+        }
+
+    # Step 4 — expiry check (authentic entries only).
+    # Downgrade to "invalid" at query time if the batch has expired.
+    try:
+        expiry = datetime.strptime(entry["expires_on"], "%Y-%m-%d").date()
+        if expiry < datetime.utcnow().date():
+            logger.warning(
+                "Seed verification: authentic batch has expired — code=%s expires_on=%s",
+                code,
+                entry["expires_on"],
+            )
+            return {
+                "success": True,
+                "code": code,
+                "status": "invalid",
+                "crop": entry["crop"],
+                "batch": entry["batch"],
+                "manufacturer": entry["manufacturer"],
+                "cert_body": entry["cert_body"],
+                "reason": f"Expired — shelf life exceeded as of {entry['expires_on']}",
+            }
+    except ValueError:
+        # expires_on is "N/A" or malformed — skip expiry check.
+        pass
+
+    # Step 5 — all checks passed: return authentic result with full metadata.
+    logger.info(
+        "Seed verification: authentic batch confirmed — code=%s crop=%s",
+        code,
+        entry["crop"],
+    )
+    return {
+        "success": True,
+        "code": code,
+        "status": "authentic",
+        "crop": entry["crop"],
+        "batch": entry["batch"],
+        "manufacturer": entry["manufacturer"],
+        "cert_body": entry["cert_body"],
+        "certified_on": entry["certified_on"],
+        "expires_on": entry["expires_on"],
+    }
+
+# --- Crop Quality Grading Endpoints ---
+
+@app.post("/api/quality/assess-single")
+@limiter.limit("10/minute")
+async def assess_single_crop(request: Request, data: CropQualityGradingRequest):
+    """
+    Assess quality of a single crop from image
+    
+    Request body:
+    {
+        "crop_type": "tomato",  // or potato, grain, fruit
+        "image_base64": "<base64_encoded_image>"
+    }
+    """
+    try:
+        # Decode base64 image
+        import base64
+        image_bytes = base64.b64decode(data.image_base64)
+        
+        # Assess the crop
+        assessment = _crop_quality_grader.assess_crop_image(
+            image_bytes, 
+            data.crop_type
+        )
+        
+        # Convert to dict
+        from dataclasses import asdict
+        result = asdict(assessment)
+        
+        return {
+            "success": True,
+            "data": result,
+            "timestamp": datetime.now().isoformat()
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("Quality assessment error: %s", str(e))
+        raise HTTPException(status_code=500, detail="Quality assessment failed")
+
+@app.post("/api/quality/assess-batch")
+@limiter.limit("5/minute")
+async def assess_batch_crops(request: Request, data: CropQualityBatchRequest):
+    """
+    Assess quality of multiple crops in batch
+    
+    Request body:
+    {
+        "crop_type": "tomato",
+        "images_base64": ["<base64_image1>", "<base64_image2>", ...]
+    }
+    """
+    try:
+        import base64
+        
+        # Decode all images
+        image_bytes_list = []
+        for img_b64 in data.images_base64:
+            try:
+                image_bytes = base64.b64decode(img_b64)
+                image_bytes_list.append(image_bytes)
+            except Exception as e:
+                logger.warning("Failed to decode image: %s", str(e))
+                continue
+        
+        if not image_bytes_list:
+            raise ValueError("No valid images provided")
+        
+        # Batch grade
+        result = _crop_quality_grader.batch_grade_crops(
+            image_bytes_list,
+            data.crop_type
+        )
+        
+        return {
+            "success": True,
+            "data": result,
+            "timestamp": datetime.now().isoformat()
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("Batch assessment error: %s", str(e))
+        raise HTTPException(status_code=500, detail="Batch assessment failed")
+
+@app.post("/api/quality/trends")
+@limiter.limit("10/minute")
+async def get_quality_trends(request: Request, data: QualityTrendsRequest):
+    """
+    Get quality trends for a crop type
+    
+    Request body:
+    {
+        "crop_type": "tomato",
+        "days": 7
+    }
+    """
+    try:
+        trends = _crop_quality_grader.get_quality_trends(
+            data.crop_type,
+            data.days
+        )
+        
+        return {
+            "success": True,
+            "data": trends,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error("Quality trends error: %s", str(e))
+        raise HTTPException(status_code=500, detail="Failed to retrieve trends")
+
+@app.get("/api/quality/supported-crops")
+@limiter.limit("20/minute")
+async def get_supported_crops(request: Request):
+    """
+    Get list of supported crops for quality grading
+    """
+    return {
+        "success": True,
+        "crops": _crop_quality_grader.supported_crops,
+        "total": len(_crop_quality_grader.supported_crops)
+    }
+
+@app.post("/api/quality/market-price")
+@limiter.limit("10/minute")
+async def calculate_market_price(request: Request, data: CropQualityGradingRequest):
+    """
+    Calculate market price adjustment based on quality grade
+    
+    Request body:
+    {
+        "crop_type": "tomato",
+        "image_base64": "<base64_encoded_image>"
+    }
+    """
+    try:
+        import base64
+        from crop_quality_grading import GRADE_MAPPING
+        
+        # Decode image
+        image_bytes = base64.b64decode(data.image_base64)
+        
+        # Assess quality
+        assessment = _crop_quality_grader.assess_crop_image(
+            image_bytes,
+            data.crop_type
+        )
+        
+        # Get grade info
+        grade_info = GRADE_MAPPING[assessment.grade]
+        
+        return {
+            "success": True,
+            "crop_type": data.crop_type,
+            "grade": assessment.grade,
+            "grade_label": grade_info["label"],
+            "score": assessment.score,
+            "price_multiplier": grade_info["price_multiplier"],
+            "recommendations": assessment.recommendations,
+            "timestamp": datetime.now().isoformat()
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("Market price calculation error: %s", str(e))
+        raise HTTPException(status_code=500, detail="Price calculation failed")
 
 if __name__ == "__main__":
     import uvicorn
